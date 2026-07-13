@@ -439,6 +439,86 @@ async def species_detail(request: Request, taxon_id: int):
     ]
   }
 
+# Old food-web/summary endpoint
+
+# @app.get("/api/v1/food-web/summary", tags=["data"])
+# async def food_web_summary(
+#   request: Request,
+#   etl_version: Optional[str] = Query(None, description="Override ETL version; defaults to latest."),
+# ):
+#   pool = await get_pg_pool(request)
+#   cache = await get_redis_cache(request)
+#   version_info = await resolve_etl_version_id(pool, etl_version)
+#   cache_key = f"v{version_info['version']}:summary"
+
+#   async def producer():
+#     async with pool.connection() as conn:
+#       async with conn.cursor(row_factory=dict_row) as cur:
+#         await cur.execute("SELECT COUNT(*) AS total_species FROM species")
+#         total_species = (await cur.fetchone())["total_species"]
+
+#         await cur.execute(
+#           """
+#           SELECT
+#             COUNT(DISTINCT predator_taxon_id) AS predator_species,
+#             COUNT(DISTINCT prey_taxon_id) AS prey_species,
+#             COALESCE(SUM(interaction_count), 0) AS total_interactions
+#           FROM predator_prey_aggregates
+#           WHERE etl_version_id = %s
+#           """,
+#           (version_info["id"],),
+#         )
+#         aggregates = dict(await cur.fetchone())
+
+#     neo4j_metrics: Dict[str, Any] = {}
+#     driver: Optional[AsyncGraphDatabase] = request.app.state.neo4j_driver
+#     if driver:
+#       async with driver.session() as session:
+#         nodes_result = await session.run(
+#           "MATCH (s:Species {etl_version: $etl}) RETURN count(s) AS species",
+#           etl=version_info["version"],
+#         )
+#         edges_result = await session.run(
+#           "MATCH ()-[r:EATS {etl_version: $etl}]->() RETURN count(r) AS relationships",
+#           etl=version_info["version"],
+#         )
+#         top_predators_result = await session.run(
+#           """
+#           MATCH (pred:Species)-[r:EATS {etl_version:$etl}]->(:Species)
+#           RETURN pred.taxon_id AS taxon_id,
+#                  pred.scientific_name AS scientific_name,
+#                  SUM(r.interaction_count) AS total_interactions
+#           ORDER BY total_interactions DESC
+#           LIMIT 5
+#           """,
+#           etl=version_info["version"],
+#         )
+#         nodes_record = await nodes_result.single()
+#         edges_record = await edges_result.single()
+#         top_predators = await top_predators_result.data()
+#         neo4j_metrics = {
+#           "species_nodes": nodes_record["species"] if nodes_record else 0,
+#           "edges": edges_record["relationships"] if edges_record else 0,
+#           "top_predators": top_predators,
+#         }
+
+#     return {
+#       "etl_version": version_info["version"],
+#       "postgres": {
+#         "total_species": total_species,
+#         "predator_species": aggregates["predator_species"],
+#         "prey_species": aggregates["prey_species"],
+#         "total_interactions": aggregates["total_interactions"],
+#       },
+#       "neo4j": neo4j_metrics or None,
+#     }
+
+#   return await cached_response(cache, cache_key, producer)
+
+
+
+
+# New food-web/summary endpoint to get the summary statistics which appear at the top of the page in the Interactive food web - BY Shriya
 
 @app.get("/api/v1/food-web/summary", tags=["data"])
 async def food_web_summary(
@@ -448,68 +528,58 @@ async def food_web_summary(
   pool = await get_pg_pool(request)
   cache = await get_redis_cache(request)
   version_info = await resolve_etl_version_id(pool, etl_version)
-  cache_key = f"v{version_info['version']}:summary"
+  cache_key = f"v{version_info['version']}:summary:flat"
 
   async def producer():
+    # Locations come from Postgres since Neo4j has no location data
     async with pool.connection() as conn:
       async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute("SELECT COUNT(*) AS total_species FROM species")
-        total_species = (await cur.fetchone())["total_species"]
-
         await cur.execute(
           """
-          SELECT
-            COUNT(DISTINCT predator_taxon_id) AS predator_species,
-            COUNT(DISTINCT prey_taxon_id) AS prey_species,
-            COALESCE(SUM(interaction_count), 0) AS total_interactions
-          FROM predator_prey_aggregates
+          SELECT COUNT(DISTINCT raw->>'place_country_name') AS location_count
+          FROM observations
           WHERE etl_version_id = %s
+            AND quality_grade = 'research'
+            AND raw->>'place_country_name' IS NOT NULL
+            AND raw->>'place_country_name' <> ''
           """,
           (version_info["id"],),
         )
-        aggregates = dict(await cur.fetchone())
+        location_row = await cur.fetchone()
+        locations = location_row["location_count"] if location_row else 0
 
-    neo4j_metrics: Dict[str, Any] = {}
+    # Observations, edges, taxa come from Neo4j via Cypher
     driver: Optional[AsyncGraphDatabase] = request.app.state.neo4j_driver
+    observations = 0
+    edges = 0
+    taxa = 0
     if driver:
       async with driver.session() as session:
-        nodes_result = await session.run(
-          "MATCH (s:Species {etl_version: $etl}) RETURN count(s) AS species",
-          etl=version_info["version"],
+        obs_result = await session.run(
+          "MATCH ()-[r:EATS]->() RETURN sum(r.interaction_count) AS observations"
         )
+        obs_record = await obs_result.single()
+        observations = obs_record["observations"] if obs_record and obs_record["observations"] else 0
+
         edges_result = await session.run(
-          "MATCH ()-[r:EATS {etl_version: $etl}]->() RETURN count(r) AS relationships",
-          etl=version_info["version"],
+          "MATCH ()-[r:EATS]->() RETURN count(r) AS edges"
         )
-        top_predators_result = await session.run(
-          """
-          MATCH (pred:Species)-[r:EATS {etl_version:$etl}]->(:Species)
-          RETURN pred.taxon_id AS taxon_id,
-                 pred.scientific_name AS scientific_name,
-                 SUM(r.interaction_count) AS total_interactions
-          ORDER BY total_interactions DESC
-          LIMIT 5
-          """,
-          etl=version_info["version"],
-        )
-        nodes_record = await nodes_result.single()
         edges_record = await edges_result.single()
-        top_predators = await top_predators_result.data()
-        neo4j_metrics = {
-          "species_nodes": nodes_record["species"] if nodes_record else 0,
-          "edges": edges_record["relationships"] if edges_record else 0,
-          "top_predators": top_predators,
-        }
+        edges = edges_record["edges"] if edges_record else 0
+
+        taxa_result = await session.run(
+          """
+          MATCH (n) RETURN count(DISTINCT n) AS taxa;
+          """
+        )
+        taxa_record = await taxa_result.single()
+        taxa = taxa_record["taxa"] if taxa_record else 0
 
     return {
-      "etl_version": version_info["version"],
-      "postgres": {
-        "total_species": total_species,
-        "predator_species": aggregates["predator_species"],
-        "prey_species": aggregates["prey_species"],
-        "total_interactions": aggregates["total_interactions"],
-      },
-      "neo4j": neo4j_metrics or None,
+      "observations": observations,
+      "edges": edges,
+      "taxa": taxa,
+      "locations": locations,
     }
 
   return await cached_response(cache, cache_key, producer)
@@ -704,3 +774,5 @@ if __name__ == "__main__":
     port=8000,
     reload=os.getenv("RELOAD", "false").lower() == "true",
   )
+
+
