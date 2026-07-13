@@ -14,6 +14,8 @@ export const InteractiveFoodWeb = () => {
   const [stats, setStats] = useState<StatsSummary | null>(null);
   const [hasError, setHasError] = useState(false);
 
+  // Added this block of code to call the food-web/summary endpoint instead of displaying the summary statistics from the static file - Shriya
+
   useEffect(() => {
     let mounted = true;
 
