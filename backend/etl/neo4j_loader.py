@@ -1,11 +1,8 @@
 """ETL stub that pushes species + predator/prey relationships into Neo4j.
 
-This loader no longer reads observations.csv directly. Postgres is now the
-source of data: postgres_loader.py must be run first for a given
---etl-version, and this script reads the resulting `species` and
-`predator_prey_aggregates` rows out of Postgres and mirrors them into Neo4j.
-This guarantees Neo4j and Postgres always agree on role/partner resolution,
-since that logic now lives in exactly one place (postgres_loader.py).
+This loader no longer reads observations.csv directly. It queries postgres instead. postgres_loader.py must be run first for a given
+--etl-version, and this script reads the resulting species and
+predator_prey_aggregates rows out of Postgres and mirrors them into Neo4j.
 """
 
 from __future__ import annotations
@@ -43,9 +40,7 @@ def fetch_etl_version_id(cur: psycopg.Cursor, version: str) -> int:
     )
   return row[0]
 
-
-def fetch_species(cur: psycopg.Cursor, etl_version_id: int) -> List[Dict[str, Any]]:
-  # Pull all species
+def fetch_species(cur: psycopg.Cursor) -> List[Dict[str, Any]]:
   cur.execute(
     """
     SELECT
@@ -90,7 +85,7 @@ def fetch_aggregates(
     )
   return payload
 
-
+# Same as previous script
 def load_species(tx, species_payload: List[Dict[str, Any]], etl_version: str) -> None:
   tx.run(
     """
@@ -107,7 +102,7 @@ def load_species(tx, species_payload: List[Dict[str, Any]], etl_version: str) ->
     etl_version=etl_version,
   )
 
-
+# Same as previous script
 def load_edges(tx, edge_payload: List[Dict[str, Any]]) -> None:
   tx.run(
     """
@@ -132,7 +127,7 @@ def main() -> None:
   with psycopg.connect(args.dsn) as conn:
     with conn.cursor() as cur:
       etl_version_id = fetch_etl_version_id(cur, args.etl_version)
-      species_payload = fetch_species(cur, etl_version_id)
+      species_payload = fetch_species(cur)
       edge_payload = fetch_aggregates(cur, etl_version_id, args.etl_version)
 
   if not species_payload:
