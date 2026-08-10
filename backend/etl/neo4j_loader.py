@@ -2,7 +2,7 @@
 
 This loader no longer reads observations.csv directly. It queries postgres instead. postgres_loader.py must be run first for a given
 --etl-version, and this script reads the resulting species and
-predator_prey_aggregates rows out of Postgres and mirrors them into Neo4j.
+predator_prey_aggregates rows out of Postgres and mirrors them into Neo4j..
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ def fetch_etl_version_id(cur: psycopg.Cursor, version: str) -> int:
     )
   return row[0]
 
+# Gets all species including the ones that have no predator/prey relationships
 def fetch_species(cur: psycopg.Cursor) -> List[Dict[str, Any]]:
   cur.execute(
     """
@@ -60,6 +61,7 @@ def fetch_aggregates(
   cur: psycopg.Cursor, etl_version_id: int, etl_version: str
 ) -> List[Dict[str, Any]]:
   cur.execute(
+    #Relationships are versioned, so only load aggregates produced by the requested ETL run
     """
     SELECT predator_taxon_id, prey_taxon_id, interaction_count, latest_observation_at
     FROM predator_prey_aggregates
@@ -85,7 +87,7 @@ def fetch_aggregates(
     )
   return payload
 
-# Same as previous script
+# Upsert Species nodes into Neo4j. Same as previous script
 def load_species(tx, species_payload: List[Dict[str, Any]], etl_version: str) -> None:
   tx.run(
     """
@@ -102,7 +104,7 @@ def load_species(tx, species_payload: List[Dict[str, Any]], etl_version: str) ->
     etl_version=etl_version,
   )
 
-# Same as previous script
+# Upsert EATS relationships between Species nodes. Same as previous script
 def load_edges(tx, edge_payload: List[Dict[str, Any]]) -> None:
   tx.run(
     """
