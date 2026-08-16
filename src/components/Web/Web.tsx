@@ -141,6 +141,7 @@ export const Web = () => {
   // The taxonId from the API corresponding to a unique organism
   const [selectedTaxonId, setSelectedTaxonId] = useState<number | null>(null)
   const [taxonDesc, setTaxonDesc] = useState<string | null>()
+  const [taxonWikiUrl, setTaxonWikiUrl] = useState<string>('')
 
   // State representing the updated amount of results from API on each year update
   // Added to handle year adjustments to properly display 0 results
@@ -508,15 +509,18 @@ export const Web = () => {
   useEffect(() => {
     if (!selectedTaxonId) {
       setTaxonDesc('')
+      setTaxonWikiUrl('')
       return
     }
     apiClient
       .get(`/v1/species/${selectedTaxonId}`)
       .then((d) => {
         setTaxonDesc(d.data.results?.[0]?.wikipedia_summary || '')
+        setTaxonWikiUrl(d.data.results?.[0]?.wikipedia_url || '')
       })
       .catch(() => {
         setTaxonDesc('')
+        setTaxonWikiUrl('')
       })
   }, [selectedTaxonId])
 
@@ -570,6 +574,7 @@ export const Web = () => {
     setSearch(value)
     setSelectedTaxonId(null)
     setTaxonDesc('')
+    setTaxonWikiUrl('')
     setIsDropdownOpen(value.trim().length >= 1)
     setSearchError(null)
     setShouldDisplayResults(false)
@@ -1007,14 +1012,26 @@ export const Web = () => {
               />
             )}
             {selectedThumbnail && taxonDesc && (
-              <h1
-                className={`transition-[font-size,line-height,opacity] duration-300 ease-out ${
-                  isTaxonMetaCondensed
-                    ? `text-sm leading-snug max-w-xl max-h-10 overflow-hidden opacity-95`
-                    : 'max-w-prose'
-                }`}
-                dangerouslySetInnerHTML={{ __html: taxonDesc }}
-              />
+              <div>
+                <h1
+                  className={`transition-[font-size,line-height,opacity] duration-300 ease-out ${
+                    isTaxonMetaCondensed
+                      ? `text-sm leading-snug max-w-xl max-h-10 overflow-hidden opacity-95`
+                      : 'max-w-prose'
+                  }`}
+                  dangerouslySetInnerHTML={{ __html: taxonDesc }}
+                />
+                {taxonWikiUrl && !isTaxonMetaCondensed && (
+                  <a
+                    href={taxonWikiUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 underline hover:text-blue-800 text-sm"
+                  >
+                    (Wikipedia)
+                  </a>
+                )}
+              </div>
             )}
           </div>
           <SearchResultSummary
